@@ -1,4 +1,4 @@
-const CACHE = "jin-cashbook-mobile-v242-pdf-export-fix8";
+const CACHE = "jin-cashbook-mobile-v242-pdf-export-fix10";
 const ASSETS = [
   "./",
   "./index.html",

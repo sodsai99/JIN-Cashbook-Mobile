@@ -418,65 +418,48 @@ function isStandalonePWA(){
   return window.matchMedia && window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 }
 
-async function openPdfInBrowser(file, filename){
-  const safeName = filename || `JIN_Cashbook_${today()}.pdf`;
-  const pdfPath = `__pdf__/${encodeURIComponent(safeName)}`;
-  const pdfUrl = new URL(pdfPath, location.href).href;
-
-  // In iOS Home Screen/PWA mode, a blob: URL can lose the PDF payload/name
-  // when the PDF viewer's Share action is used. Store the real PDF bytes in
-  // Cache Storage and open a normal HTTPS URL instead. The service worker
-  // serves that cached response, so iOS sees a real PDF URL + filename.
-  try{
-    if('caches' in window){
-      const cache = await caches.open('jin-cashbook-mobile-v242-pdf-export-fix8');
-      await cache.put(pdfUrl, new Response(file, {
-        headers: {
-          'Content-Type':'application/pdf',
-          'Content-Disposition':`inline; filename="${safeName.replace(/"/g,'')}"`
-        }
-      }));
-      const w = window.open(pdfUrl, '_blank');
-      if(!w){
-        window.location.href = pdfUrl;
-      }
-      // Keep it available long enough for the iOS PDF viewer/share sheet.
-      setTimeout(() => { caches.open('jin-cashbook-mobile-v242-pdf-export-fix8').then(c=>c.delete(pdfUrl)).catch(()=>{}); }, 10*60*1000);
-      return true;
-    }
-  }catch(e){
-    console.warn('cache PDF fallback',e);
-  }
-
-  // Fallback for browsers without Cache Storage.
-  const blobUrl = URL.createObjectURL(file);
-  const w = window.open(blobUrl, '_blank');
-  if(!w){
+function openPdfInBrowser(file){
+  const url = URL.createObjectURL(file);
+  // In iOS Home Screen/PWA mode, opening the Blob in a new browser context
+  // is much more reliable than navigator.share({files}) or <a download>.
+  const w = window.open(url, '_blank');
+  if (!w) {
     const a = document.createElement('a');
-    a.href = blobUrl; a.target='_blank'; a.rel='noopener';
-    document.body.appendChild(a); a.click(); a.remove();
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   }
-  setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
   return true;
 }
 
 async function shareReport(){
   try{
-    const file=new File([await makeReportPdf()],`JIN_Cashbook_${today()}.pdf`,{type:'application/pdf'});
-    // Safari browser: use the native file share when supported.
-    if(!isStandalonePWA() && navigator.share){
+    const blob = await makeReportPdf();
+    const file = new File([blob], `JIN_Cashbook_${today()}.pdf`, {type:'application/pdf'});
+
+    // FIX10: Use the native Web Share API with the real PDF File in BOTH
+    // Safari and Home Screen/PWA. Do not route PWA through blob: PDF viewer,
+    // because iOS can turn that viewer share into Unknown.pdf / empty files.
+    if(navigator.share && (!navigator.canShare || navigator.canShare({files:[file]}))){
       try{
-        if(!navigator.canShare || navigator.canShare({files:[file]})){
-          await navigator.share({title:'JIN Cashbook - รายงาน PDF',files:[file]});
-          return;
-        }
+        await navigator.share({
+          title:'JIN Cashbook - รายงาน PDF',
+          text:'รายงานรายรับ-รายจ่าย JIN Cashbook',
+          files:[file]
+        });
+        return;
       }catch(e){
         if(e?.name==='AbortError') return;
+        console.warn('native PDF share failed, using fallback', e);
       }
     }
-    // Home Screen/PWA or unsupported file-share: open the PDF in the browser.
-    // The iOS PDF viewer then provides its own Share button for LINE/Files/etc.
-    await openPdfInBrowser(file, `JIN_Cashbook_${today()}.pdf`);
+
+    // Fallback for browsers that do not support file sharing.
+    openPdfInBrowser(file);
   }catch(e){
     if(e?.name==='AbortError')return;
     console.error('shareReport',e);
@@ -486,27 +469,26 @@ async function shareReport(){
 
 async function saveReportPdf(){
   try{
-    const file = new File([await makeReportPdf()], `JIN_Cashbook_${today()}.pdf`, {type:'application/pdf'});
+    const blob = await makeReportPdf();
+    const file = new File([blob], `JIN_Cashbook_${today()}.pdf`, {type:'application/pdf'});
 
-    // Browser mode: native file share is the cleanest route.
-    if(!isStandalonePWA() && navigator.share){
+    // FIX10: Prefer the native file share in both Safari and Home Screen/PWA.
+    // This keeps the original PDF bytes and filename intact.
+    if(navigator.share && (!navigator.canShare || navigator.canShare({files:[file]}))){
       try{
-        if(!navigator.canShare || navigator.canShare({files:[file]})){
-          await navigator.share({
-            title:'JIN Cashbook - PDF รายงาน',
-            files:[file]
-          });
-          return;
-        }
+        await navigator.share({
+          title:'JIN Cashbook - PDF รายงาน',
+          text:'รายงานรายรับ-รายจ่าย JIN Cashbook',
+          files:[file]
+        });
+        return;
       }catch(e){
         if(e?.name==='AbortError') return;
+        console.warn('native PDF save/share failed, using fallback', e);
       }
     }
 
-    // iOS Home Screen/PWA cannot reliably download/share Blob files directly.
-    // Open the generated PDF in the browser/PDF viewer instead. From there the
-    // user can tap Share and choose LINE, Files, Drive, etc.
-    await openPdfInBrowser(file, `JIN_Cashbook_${today()}.pdf`);
+    openPdfInBrowser(file);
   }catch(e){
     if(e?.name==='AbortError') return;
     console.error('saveReportPdf',e);
@@ -556,7 +538,7 @@ function init() {
   }).catch(() => render());
 
   if ("serviceWorker" in navigator && window.isSecureContext) {
-    navigator.serviceWorker.register("sw.js?v=fix8").catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=fix10").catch(() => {});
   }
 }
 
