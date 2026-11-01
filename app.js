@@ -418,21 +418,45 @@ function isStandalonePWA(){
   return window.matchMedia && window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
 }
 
-function openPdfInBrowser(file){
-  const url = URL.createObjectURL(file);
-  // In iOS Home Screen/PWA mode, opening the Blob in a new browser context
-  // is much more reliable than navigator.share({files}) or <a download>.
-  const w = window.open(url, '_blank');
-  if (!w) {
-    const a = document.createElement('a');
-    a.href = url;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
+async function openPdfInBrowser(file, filename){
+  const safeName = filename || `JIN_Cashbook_${today()}.pdf`;
+  const pdfPath = `__pdf__/${encodeURIComponent(safeName)}`;
+  const pdfUrl = new URL(pdfPath, location.href).href;
+
+  // In iOS Home Screen/PWA mode, a blob: URL can lose the PDF payload/name
+  // when the PDF viewer's Share action is used. Store the real PDF bytes in
+  // Cache Storage and open a normal HTTPS URL instead. The service worker
+  // serves that cached response, so iOS sees a real PDF URL + filename.
+  try{
+    if('caches' in window){
+      const cache = await caches.open('jin-cashbook-mobile-v242-pdf-export-fix8');
+      await cache.put(pdfUrl, new Response(file, {
+        headers: {
+          'Content-Type':'application/pdf',
+          'Content-Disposition':`inline; filename="${safeName.replace(/"/g,'')}"`
+        }
+      }));
+      const w = window.open(pdfUrl, '_blank');
+      if(!w){
+        window.location.href = pdfUrl;
+      }
+      // Keep it available long enough for the iOS PDF viewer/share sheet.
+      setTimeout(() => { caches.open('jin-cashbook-mobile-v242-pdf-export-fix8').then(c=>c.delete(pdfUrl)).catch(()=>{}); }, 10*60*1000);
+      return true;
+    }
+  }catch(e){
+    console.warn('cache PDF fallback',e);
   }
-  setTimeout(() => URL.revokeObjectURL(url), 60000);
+
+  // Fallback for browsers without Cache Storage.
+  const blobUrl = URL.createObjectURL(file);
+  const w = window.open(blobUrl, '_blank');
+  if(!w){
+    const a = document.createElement('a');
+    a.href = blobUrl; a.target='_blank'; a.rel='noopener';
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
   return true;
 }
 
@@ -452,7 +476,7 @@ async function shareReport(){
     }
     // Home Screen/PWA or unsupported file-share: open the PDF in the browser.
     // The iOS PDF viewer then provides its own Share button for LINE/Files/etc.
-    openPdfInBrowser(file);
+    await openPdfInBrowser(file, `JIN_Cashbook_${today()}.pdf`);
   }catch(e){
     if(e?.name==='AbortError')return;
     console.error('shareReport',e);
@@ -482,7 +506,7 @@ async function saveReportPdf(){
     // iOS Home Screen/PWA cannot reliably download/share Blob files directly.
     // Open the generated PDF in the browser/PDF viewer instead. From there the
     // user can tap Share and choose LINE, Files, Drive, etc.
-    openPdfInBrowser(file);
+    await openPdfInBrowser(file, `JIN_Cashbook_${today()}.pdf`);
   }catch(e){
     if(e?.name==='AbortError') return;
     console.error('saveReportPdf',e);
@@ -532,7 +556,7 @@ function init() {
   }).catch(() => render());
 
   if ("serviceWorker" in navigator && window.isSecureContext) {
-    navigator.serviceWorker.register("sw.js?v=fix7").catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=fix8").catch(() => {});
   }
 }
 
