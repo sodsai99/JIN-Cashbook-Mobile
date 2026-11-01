@@ -368,7 +368,10 @@ async function canvasPagesToPdf(pages){
     const data=canvas.toDataURL('image/jpeg',0.92).split(',')[1]; const img=b64ToBytes(data);
     const imgObj=add({jpeg:img,w:canvas.width,h:canvas.height});
     const content=`q\n${W} 0 0 ${H} 0 0 cm\n/Im0 Do\nQ\n`;
-    const contentObj=add(content);
+    // FIX11: include the required /Length on the PDF content stream.
+    // Some iOS/external PDF viewers are stricter than Safari's inline viewer
+    // and otherwise open the shared PDF as a blank page.
+    const contentObj=add({stream:content, length:new TextEncoder().encode(content).length});
     const pageObj=add({page:true,contentObj,imgObj}); pageIds.push(pageObj);
   }
   objs[catalog-1]=`<< /Type /Catalog /Pages ${pagesObj} 0 R >>`;
@@ -380,6 +383,11 @@ async function canvasPagesToPdf(pages){
     offsets.push(offset); const n=i+1; const o=objs[i]; let head=`${n} 0 obj\n`;
     if(typeof o==='string'){
       const body=o; pushBytes(enc.encode(head+body+'\nendobj\n'));
+    }else if(o && o.stream){
+      const bodyBytes=enc.encode(o.stream);
+      pushBytes(enc.encode(head+`<< /Length ${bodyBytes.length} >>\nstream\n`));
+      pushBytes(bodyBytes);
+      pushBytes(enc.encode('\nendstream\nendobj\n'));
     }else if(o && o.jpeg){
       pushBytes(enc.encode(head+`<< /Type /XObject /Subtype /Image /Width ${o.w} /Height ${o.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${o.jpeg.length} >>\nstream\n`));
       pushBytes(o.jpeg); pushBytes(enc.encode('\nendstream\nendobj\n'));
@@ -399,8 +407,36 @@ function drawReportPage(canvas, list, pageIndex, pageCount, inc, out, net){
   ctx.font='bold 27px Arial,"Noto Sans Thai",sans-serif';ctx.fillText('รายงานรายรับ-รายจ่าย',W/2,105);
   ctx.font='bold 22px Arial,"Noto Sans Thai",sans-serif';ctx.fillText(getPeriodLabel(),W/2,137);
   ctx.textAlign='left';ctx.fillStyle='#182536';ctx.font='bold 25px Arial,"Noto Sans Thai",sans-serif';ctx.fillText(`รายงานวันที่ ${thaiDate(today())}`,M,205);
-  const cards=[['รายรับ',`฿${money(inc)}`,'#12b95b'],['รายจ่าย',`฿${money(out)}`,'#ef3b5d'],['คงเหลือ',`${net<0?'−':''}฿${money(Math.abs(net))}`,'#1769e0'],['จำนวนรายการ',String(list.length),'#7657db']];
-  cards.forEach((c,i)=>{const x=M+i*275;ctx.fillStyle=c[2];ctx.roundRect(x,235,250,105,18);ctx.fill();ctx.fillStyle='#fff';ctx.font='bold 20px Arial,"Noto Sans Thai",sans-serif';ctx.fillText(c[0],x+18,267);ctx.font='bold 28px Arial,"Noto Sans Thai",sans-serif';ctx.fillText(c[1],x+18,310);});
+  // FIX12: draw report summary cards in two explicit passes.
+  // iOS/PWA PDF sharing was intermittently dropping the first three card text
+  // even though the same report/table rendered correctly on screen. Avoid
+  // reusing the card tuple values during the text pass and force explicit
+  // strings, alignment, baseline and font before every draw operation.
+  const cardX=[M,M+275,M+550,M+825];
+  const cardFill=['#12b95b','#ef3b5d','#1769e0','#7657db'];
+  const cardLabels=['รายรับ','รายจ่าย','คงเหลือ','จำนวนรายการ'];
+  const cardValues=[`฿${money(Number(inc)||0)}`,`฿${money(Number(out)||0)}`,`${Number(net)<0?'−':''}฿${money(Math.abs(Number(net)||0))}`,String(list.length)];
+  for(let i=0;i<4;i++){
+    const x=cardX[i];
+    ctx.save();
+    ctx.fillStyle=cardFill[i];
+    ctx.beginPath();
+    if(ctx.roundRect){ctx.roundRect(x,235,250,105,18);}else{ctx.rect(x,235,250,105);}
+    ctx.fill();
+    ctx.restore();
+  }
+  for(let i=0;i<4;i++){
+    const x=cardX[i];
+    ctx.save();
+    ctx.fillStyle='#ffffff';
+    ctx.textAlign='left';
+    ctx.textBaseline='alphabetic';
+    ctx.font='700 20px Arial, sans-serif';
+    ctx.fillText(String(cardLabels[i]),x+18,267,214);
+    ctx.font='700 28px Arial, sans-serif';
+    ctx.fillText(String(cardValues[i]),x+18,310,214);
+    ctx.restore();
+  }
   let y=390; const cols=[M,180,340,760,1010]; const heads=['วันที่','ประเภท','รายการรายละเอียด','หมายเหตุ','จำนวนเงิน'];
   ctx.fillStyle='#eaf1f8';ctx.fillRect(M,y,W-2*M,52);ctx.fillStyle='#29425d';ctx.font='bold 18px Arial,"Noto Sans Thai",sans-serif';heads.forEach((h,i)=>ctx.fillText(h,cols[i]+8,y+33));y+=52;
   const rowH=66; const usableBottom=H-90;
@@ -438,27 +474,20 @@ function openPdfInBrowser(file){
 
 async function shareReport(){
   try{
-    const blob = await makeReportPdf();
-    const file = new File([blob], `JIN_Cashbook_${today()}.pdf`, {type:'application/pdf'});
-
-    // FIX10: Use the native Web Share API with the real PDF File in BOTH
-    // Safari and Home Screen/PWA. Do not route PWA through blob: PDF viewer,
-    // because iOS can turn that viewer share into Unknown.pdf / empty files.
-    if(navigator.share && (!navigator.canShare || navigator.canShare({files:[file]}))){
+    const file=new File([await makeReportPdf()],`JIN_Cashbook_${today()}.pdf`,{type:'application/pdf'});
+    // Safari browser: use the native file share when supported.
+    if(!isStandalonePWA() && navigator.share){
       try{
-        await navigator.share({
-          title:'JIN Cashbook - รายงาน PDF',
-          text:'รายงานรายรับ-รายจ่าย JIN Cashbook',
-          files:[file]
-        });
-        return;
+        if(!navigator.canShare || navigator.canShare({files:[file]})){
+          await navigator.share({title:'JIN Cashbook - รายงาน PDF',files:[file]});
+          return;
+        }
       }catch(e){
         if(e?.name==='AbortError') return;
-        console.warn('native PDF share failed, using fallback', e);
       }
     }
-
-    // Fallback for browsers that do not support file sharing.
+    // Home Screen/PWA or unsupported file-share: open the PDF in the browser.
+    // The iOS PDF viewer then provides its own Share button for LINE/Files/etc.
     openPdfInBrowser(file);
   }catch(e){
     if(e?.name==='AbortError')return;
@@ -469,25 +498,26 @@ async function shareReport(){
 
 async function saveReportPdf(){
   try{
-    const blob = await makeReportPdf();
-    const file = new File([blob], `JIN_Cashbook_${today()}.pdf`, {type:'application/pdf'});
+    const file = new File([await makeReportPdf()], `JIN_Cashbook_${today()}.pdf`, {type:'application/pdf'});
 
-    // FIX10: Prefer the native file share in both Safari and Home Screen/PWA.
-    // This keeps the original PDF bytes and filename intact.
-    if(navigator.share && (!navigator.canShare || navigator.canShare({files:[file]}))){
+    // Browser mode: native file share is the cleanest route.
+    if(!isStandalonePWA() && navigator.share){
       try{
-        await navigator.share({
-          title:'JIN Cashbook - PDF รายงาน',
-          text:'รายงานรายรับ-รายจ่าย JIN Cashbook',
-          files:[file]
-        });
-        return;
+        if(!navigator.canShare || navigator.canShare({files:[file]})){
+          await navigator.share({
+            title:'JIN Cashbook - PDF รายงาน',
+            files:[file]
+          });
+          return;
+        }
       }catch(e){
         if(e?.name==='AbortError') return;
-        console.warn('native PDF save/share failed, using fallback', e);
       }
     }
 
+    // iOS Home Screen/PWA cannot reliably download/share Blob files directly.
+    // Open the generated PDF in the browser/PDF viewer instead. From there the
+    // user can tap Share and choose LINE, Files, Drive, etc.
     openPdfInBrowser(file);
   }catch(e){
     if(e?.name==='AbortError') return;
@@ -538,7 +568,7 @@ function init() {
   }).catch(() => render());
 
   if ("serviceWorker" in navigator && window.isSecureContext) {
-    navigator.serviceWorker.register("sw.js?v=fix10").catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=fix11").catch(() => {});
   }
 }
 
