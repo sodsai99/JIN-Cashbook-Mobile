@@ -7,6 +7,8 @@ let entries = [];
 let kind = "income";
 let editingId = null;
 let currentMode = "day";
+let customStart = "";
+let customEnd = "";
 
 const $ = id => document.getElementById(id);
 const today = () => {
@@ -90,6 +92,8 @@ function openModal(type = kind) {
   $("modal").classList.remove("hidden");
   if (!editingId) {
     $("date").value = today();
+    $("quantity").value = "";
+    $("unitPrice").value = "";
     $("amount").value = "";
     $("description").value = "";
     $("note").value = "";
@@ -110,6 +114,32 @@ function getPeriodLabel() {
   if (currentMode === "day") return `วันนี้ ${thaiDate(today())}`;
   if (currentMode === "month") return `เดือนนี้ ${today().slice(0, 7)}`;
   if (currentMode === "year") return `ปีนี้ ${Number(today().slice(0, 4)) + 543}`;
+  if (currentMode === "custom") {
+    if (customStart && customEnd) return `ช่วง ${thaiDate(customStart)} - ${thaiDate(customEnd)}`;
+    if (customStart) return `ตั้งแต่ ${thaiDate(customStart)}`;
+    return "กำหนดช่วงวันที่";
+  }
+  return "ทั้งหมด";
+}
+
+
+function getModernRangeLabel() {
+  if (currentMode === "day") return `${thaiDate(today())}`;
+  if (currentMode === "month") {
+    const t = today();
+    const [y,m] = t.split("-").map(Number);
+    const last = new Date(y, m, 0).getDate();
+    return `${thaiDate(`${y}-${String(m).padStart(2,"0")}-01`)} - ${thaiDate(`${y}-${String(m).padStart(2,"0")}-${String(last).padStart(2,"0")}`)}`;
+  }
+  if (currentMode === "year") {
+    const y = Number(today().slice(0,4));
+    return `1/1/${y+543} - 31/12/${y+543}`;
+  }
+  if (currentMode === "custom") {
+    if (customStart && customEnd) return `${thaiDate(customStart)} - ${thaiDate(customEnd)}`;
+    if (customStart) return `ตั้งแต่ ${thaiDate(customStart)}`;
+    return "กำหนดช่วงวันที่";
+  }
   return "ทั้งหมด";
 }
 
@@ -118,12 +148,19 @@ function periodEntries(list = entries) {
   if (currentMode === "day") return list.filter(e => e.date === t);
   if (currentMode === "month") return list.filter(e => e.date.startsWith(t.slice(0, 7)));
   if (currentMode === "year") return list.filter(e => e.date.startsWith(t.slice(0, 4)));
+  if (currentMode === "custom") {
+    const start = customStart || customEnd || t;
+    const end = customEnd || customStart || t;
+    const lo = start <= end ? start : end;
+    const hi = start <= end ? end : start;
+    return list.filter(e => e.date >= lo && e.date <= hi);
+  }
   return list.slice();
 }
 
 function historyEntries() {
   const q = ($( "search")?.value || "").trim().toLowerCase();
-  return entries
+  return periodEntries(entries)
     .filter(e => !q || `${e.description} ${e.note || ""}`.toLowerCase().includes(q))
     .sort((a, b) => b.date.localeCompare(a.date) || b.id.localeCompare(a.id));
 }
@@ -145,6 +182,8 @@ function render() {
   $("reportExpense").textContent = `฿${money(out)}`;
   $("reportNet").textContent = `${net < 0 ? "−" : ""}฿${money(Math.abs(net))}`;
   $("reportCount").textContent = list.length;
+  if ($("homeCount")) $("homeCount").textContent = list.length;
+  if ($("rangeLabel")) $("rangeLabel").textContent = getModernRangeLabel();
   $("reportText").innerHTML = `${getPeriodLabel()} · <b>${list.length}</b> รายการ · รายรับ <b>฿${money(inc)}</b> · รายจ่าย <b>฿${money(out)}</b> · คงเหลือ <b>${net < 0 ? "−" : ""}฿${money(Math.abs(net))}</b>`;
 
   renderMonthlyChart();
@@ -179,6 +218,15 @@ function renderMonthlyChart() {
     </div>`).join("");
 }
 
+function itemDescription(x) {
+  const qty = Number(x.quantity);
+  const unit = Number(x.unitPrice);
+  if (Number.isFinite(qty) && qty > 0 && Number.isFinite(unit) && unit > 0) {
+    return `${x.description} · ${money(qty).replace(/\.00$/, "")} × ฿${money(unit)} = ฿${money(x.amount)}`;
+  }
+  return x.description || "";
+}
+
 function renderList(box, list) {
   if (!box) return;
   box.innerHTML = "";
@@ -207,7 +255,7 @@ function renderList(box, list) {
         <button class="edit" type="button">แก้ไข</button>
         <button class="del" type="button">ลบ</button>
       </div>`;
-    el.querySelector(".item-desc").textContent = x.description;
+    el.querySelector(".item-desc").textContent = itemDescription(x);
     el.querySelector(".item-note").textContent = x.note || "";
     el.querySelector(".edit").onclick = () => edit(x.id);
     el.querySelector(".del").onclick = () => remove(x.id);
@@ -217,12 +265,21 @@ function renderList(box, list) {
 
 async function saveEntry() {
   const date = $("date").value;
-  const amount = Number($("amount").value);
   const description = $("description").value.trim();
+  const quantityRaw = $("quantity").value.trim();
+  const unitRaw = $("unitPrice").value.trim();
+  let amount = Number($("amount").value);
+  const quantity = quantityRaw === "" ? null : Number(quantityRaw);
+  const unitPrice = unitRaw === "" ? null : Number(unitRaw);
 
   if (!date) return alert("กรุณาเลือกวันที่");
   if (!description) return alert("กรุณากรอกรายละเอียดรายการ");
-  if (!Number.isFinite(amount) || amount <= 0) return alert("กรุณากรอกจำนวนเงินมากกว่า 0");
+  if (quantityRaw !== "" && (!Number.isFinite(quantity) || quantity <= 0)) return alert("กรุณากรอกจำนวนมากกว่า 0");
+  if (unitRaw !== "" && (!Number.isFinite(unitPrice) || unitPrice <= 0)) return alert("กรุณากรอกราคาต่อหน่วยมากกว่า 0");
+  if (Number.isFinite(quantity) && quantity > 0 && Number.isFinite(unitPrice) && unitPrice > 0) {
+    amount = quantity * unitPrice;
+  }
+  if (!Number.isFinite(amount) || amount <= 0) return alert("กรุณากรอกจำนวนเงินมากกว่า 0 หรือใส่จำนวน × ราคาต่อหน่วย");
 
   const item = {
     id: editingId || uid(),
@@ -232,6 +289,8 @@ async function saveEntry() {
     amount: Math.round(amount * 100) / 100,
     note: $("note").value.trim()
   };
+  if (Number.isFinite(quantity) && quantity > 0) item.quantity = quantity;
+  if (Number.isFinite(unitPrice) && unitPrice > 0) item.unitPrice = Math.round(unitPrice * 100) / 100;
 
   if (editingId) {
     const i = entries.findIndex(x => x.id === editingId);
@@ -240,10 +299,11 @@ async function saveEntry() {
     entries.push(item);
   }
 
+  const wasEditing = !!editingId;
   await saveEntries(entries);
   closeModal();
   render();
-  alert(editingId ? "บันทึกการแก้ไขเรียบร้อยแล้ว" : "บันทึกรายการเรียบร้อยแล้ว");
+  alert(wasEditing ? "บันทึกการแก้ไขเรียบร้อยแล้ว" : "บันทึกรายการเรียบร้อยแล้ว");
 }
 
 function edit(id) {
@@ -253,8 +313,11 @@ function edit(id) {
   $("formTitle").textContent = "แก้ไขรายการ";
   $("saveBtn").textContent = "บันทึกการแก้ไข";
   $("date").value = x.date;
+  $("quantity").value = x.quantity ?? "";
+  $("unitPrice").value = x.unitPrice ?? "";
   $("amount").value = x.amount;
   $("description").value = x.description;
+  updateCalcHint();
   $("note").value = x.note || "";
   openModal(x.type);
 }
@@ -268,8 +331,41 @@ async function remove(id) {
   render();
 }
 
+function formatMonthStart(y, m){ return `${y}-${String(m).padStart(2,"0")}-01`; }
+function monthRange(offset = 0){
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + offset);
+  const y=d.getFullYear(), m=d.getMonth()+1;
+  const start=formatMonthStart(y,m);
+  const last=new Date(y,m,0);
+  const end=`${y}-${String(m).padStart(2,"0")}-${String(last.getDate()).padStart(2,"0")}`;
+  return {start,end};
+}
+function setCustomRange(start,end){
+  customStart=start; customEnd=end;
+  $("rangeStart").value=start; $("rangeEnd").value=end;
+}
+function updateCalcHint(){
+  const q=Number($("quantity").value), u=Number($("unitPrice").value);
+  if(Number.isFinite(q)&&q>0&&Number.isFinite(u)&&u>0){
+    const total=q*u;
+    $("amount").value=Math.round(total*100)/100;
+    $("calcHint").textContent=`คำนวณแล้ว ${money(q).replace(/\.00$/,"")} × ฿${money(u)} = ฿${money(total)}`;
+  }else{
+    $("calcHint").textContent="ใส่จำนวน × ราคาต่อหน่วย ระบบคำนวณให้อัตโนมัติ";
+  }
+}
+
 function setMode(mode) {
   currentMode = mode;
+  if (mode === "custom") {
+    const r = monthRange(0);
+    if (!customStart && !customEnd) setCustomRange(r.start, today());
+    $("customRange").classList.remove("hidden");
+  } else {
+    $("customRange").classList.add("hidden");
+  }
   document.querySelectorAll(".period-pills button").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
   render();
 }
@@ -346,7 +442,7 @@ function restoreFile(ev) {
 
 function escapeHtml(v){return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
 function reportData(){const list=selectedEntries(),inc=list.filter(x=>x.type==="income").reduce((s,x)=>s+Number(x.amount||0),0),out=list.filter(x=>x.type==="expense").reduce((s,x)=>s+Number(x.amount||0),0);return{list,inc,out,net:inc-out};}
-function buildReportHtml(){const {list,inc,out,net}=reportData();const rows=list.length?list.map(x=>`<tr><td>${thaiDate(x.date)}</td><td>${x.type==="income"?"รายรับ":"รายจ่าย"}</td><td>${escapeHtml(x.description)}</td><td>${escapeHtml(x.note||"")}</td><td class="report-right ${x.type==="income"?"report-in":"report-out"}">${x.type==="income"?"+":"−"}฿${money(x.amount)}</td></tr>`).join(""):"<tr><td colspan=5 class=report-empty>ไม่มีรายการในช่วงที่เลือก</td></tr>";return `<div class="report-sheet"><div class="report-heading"><h1>JIN Cashbook</h1><h2>รายงานรายรับ-รายจ่าย</h2><div class="report-period">${getPeriodLabel()}</div><div class="report-generated">พิมพ์รายงานวันที่ ${thaiDate(today())}</div></div><div class="report-summary"><div class="rs income"><small>รายรับ</small><b>฿${money(inc)}</b></div><div class="rs expense"><small>รายจ่าย</small><b>฿${money(out)}</b></div><div class="rs balance"><small>คงเหลือ</small><b>${net<0?"−":""}฿${money(Math.abs(net))}</b></div><div class="rs count"><small>จำนวนรายการ</small><b>${list.length}</b></div></div><div class="report-table-wrap"><table class="report-table"><thead><tr><th>วันที่</th><th>ประเภท</th><th>รายการรายละเอียด</th><th>หมายเหตุ</th><th>จำนวนเงิน</th></tr></thead><tbody>${rows}</tbody></table></div><div class="report-footer">JIN Cashbook Mobile · รายงานจากข้อมูลที่เก็บในเครื่อง</div></div>`;}
+function buildReportHtml(){const {list,inc,out,net}=reportData();const rows=list.length?list.map(x=>`<tr><td>${thaiDate(x.date)}</td><td>${x.type==="income"?"รายรับ":"รายจ่าย"}</td><td>${escapeHtml(itemDescription(x))}</td><td>${escapeHtml(x.note||"")}</td><td class="report-right ${x.type==="income"?"report-in":"report-out"}">${x.type==="income"?"+":"−"}฿${money(x.amount)}</td></tr>`).join(""):"<tr><td colspan=5 class=report-empty>ไม่มีรายการในช่วงที่เลือก</td></tr>";return `<div class="report-sheet"><div class="report-heading"><h1>JIN Cashbook</h1><h2>รายงานรายรับ-รายจ่าย</h2><div class="report-period">${getPeriodLabel()}</div><div class="report-generated">พิมพ์รายงานวันที่ ${thaiDate(today())}</div></div><div class="report-summary"><div class="rs income"><small>รายรับ</small><b>฿${money(inc)}</b></div><div class="rs expense"><small>รายจ่าย</small><b>฿${money(out)}</b></div><div class="rs balance"><small>คงเหลือ</small><b>${net<0?"−":""}฿${money(Math.abs(net))}</b></div><div class="rs count"><small>จำนวนรายการ</small><b>${list.length}</b></div></div><div class="report-table-wrap"><table class="report-table"><thead><tr><th>วันที่</th><th>ประเภท</th><th>รายการรายละเอียด</th><th>หมายเหตุ</th><th>จำนวนเงิน</th></tr></thead><tbody>${rows}</tbody></table></div><div class="report-footer">JIN Cashbook Mobile · รายงานจากข้อมูลที่เก็บในเครื่อง</div></div>`;}
 function showReport(){$("reportContent").innerHTML=buildReportHtml();$("reportView").classList.remove("hidden");document.body.classList.add("report-open");window.scrollTo(0,0);}
 function closeReport(){$("reportView").classList.add("hidden");document.body.classList.remove("report-open");go("home");}
 async function wrapCanvasText(ctx, text, maxWidth){
@@ -441,7 +537,7 @@ function drawReportPage(canvas, list, pageIndex, pageCount, inc, out, net){
   ctx.fillStyle='#eaf1f8';ctx.fillRect(M,y,W-2*M,52);ctx.fillStyle='#29425d';ctx.font='bold 18px Arial,"Noto Sans Thai",sans-serif';heads.forEach((h,i)=>ctx.fillText(h,cols[i]+8,y+33));y+=52;
   const rowH=66; const usableBottom=H-90;
   const rows=list.slice(pageIndex*20,(pageIndex+1)*20);
-  rows.forEach((x,ri)=>{ctx.strokeStyle='#cbd7e5';ctx.strokeRect(M,y,W-2*M,rowH);ctx.fillStyle=ri%2?'#fff':'#f8fbfe';ctx.fillRect(M,y,W-2*M,rowH);ctx.strokeStyle='#cbd7e5';[cols[1],cols[2],cols[3],cols[4]].forEach(col=>{ctx.beginPath();ctx.moveTo(col,y);ctx.lineTo(col,y+rowH);ctx.stroke();});ctx.fillStyle='#182536';ctx.font='16px Arial,"Noto Sans Thai",sans-serif';ctx.fillText(thaiDate(x.date),cols[0]+8,y+25);ctx.fillText(x.type==='income'?'รายรับ':'รายจ่าย',cols[1]+8,y+25);ctx.fillText(String(x.description||'').slice(0,32),cols[2]+8,y+25);ctx.fillText(String(x.note||'').slice(0,20),cols[3]+8,y+25);ctx.textAlign='right';ctx.fillStyle=x.type==='income'?'#0a9f36':'#e91d43';ctx.font='bold 17px Arial,"Noto Sans Thai",sans-serif';ctx.fillText(`${x.type==='income'?'+':'−'}฿${money(x.amount)}`,W-M-10,y+25);ctx.textAlign='left';y+=rowH;});
+  rows.forEach((x,ri)=>{ctx.strokeStyle='#cbd7e5';ctx.strokeRect(M,y,W-2*M,rowH);ctx.fillStyle=ri%2?'#fff':'#f8fbfe';ctx.fillRect(M,y,W-2*M,rowH);ctx.strokeStyle='#cbd7e5';[cols[1],cols[2],cols[3],cols[4]].forEach(col=>{ctx.beginPath();ctx.moveTo(col,y);ctx.lineTo(col,y+rowH);ctx.stroke();});ctx.fillStyle='#182536';ctx.font='16px Arial,"Noto Sans Thai",sans-serif';ctx.fillText(thaiDate(x.date),cols[0]+8,y+25);ctx.fillText(x.type==='income'?'รายรับ':'รายจ่าย',cols[1]+8,y+25);ctx.fillText(String(itemDescription(x)||'').slice(0,32),cols[2]+8,y+25);ctx.fillText(String(x.note||'').slice(0,20),cols[3]+8,y+25);ctx.textAlign='right';ctx.fillStyle=x.type==='income'?'#0a9f36':'#e91d43';ctx.font='bold 17px Arial,"Noto Sans Thai",sans-serif';ctx.fillText(`${x.type==='income'?'+':'−'}฿${money(x.amount)}`,W-M-10,y+25);ctx.textAlign='left';y+=rowH;});
   if(!rows.length){ctx.fillStyle='#7b8998';ctx.font='20px Arial,"Noto Sans Thai",sans-serif';ctx.textAlign='center';ctx.fillText('ไม่มีรายการในช่วงที่เลือก',W/2,y+45);ctx.textAlign='left';}
   ctx.fillStyle='#8996a5';ctx.font='15px Arial,"Noto Sans Thai",sans-serif';ctx.textAlign='center';ctx.fillText(`JIN Cashbook Mobile · หน้า ${pageIndex+1}/${pageCount}`,W/2,H-35);ctx.textAlign='left';
 }
@@ -541,12 +637,33 @@ function init() {
   $("restoreQuick").onclick = () => $("restoreFile").click();
   $("csvQuick").onclick = csv;
   $("printQuick").onclick = showReport;
-  $("seeAllChart").onclick = () => go("summary");
+  if ($("seeAllChart")) $("seeAllChart").onclick = () => go("summary");
+  if ($("chartPeriod")) $("chartPeriod").onclick = () => go("summary");
   $("seeAll").onclick = () => go("history");
   $("seeAllQuick").onclick = () => go("history");
   $("headerSettings").onclick = () => go("settings");
   document.querySelectorAll(".nav").forEach(n => n.onclick = () => go(n.dataset.page));
   document.querySelectorAll(".period-pills button").forEach(b => b.onclick = () => setMode(b.dataset.mode));
+  if ($("rangeChange")) $("rangeChange").onclick = () => {
+    $("customRange").classList.toggle("hidden");
+    $("customRange").scrollIntoView({behavior:"smooth", block:"nearest"});
+  };
+  $("rangeApply").onclick = () => {
+    let a=$("rangeStart").value, b=$("rangeEnd").value;
+    if(!a && !b) return alert("กรุณาเลือกวันที่เริ่มต้นและวันที่สิ้นสุด");
+    if(!a) a=b; if(!b) b=a;
+    if(a>b){ const t=a; a=b; b=t; }
+    setCustomRange(a,b); currentMode="custom";
+    document.querySelectorAll(".period-pills button").forEach(x=>x.classList.toggle("active",x.dataset.mode==="custom"));
+    render();
+  };
+  $("rangeThisMonth").onclick = () => { const r=monthRange(0); setCustomRange(r.start,today()); currentMode="custom"; render(); };
+  $("rangeLastMonth").onclick = () => { const r=monthRange(-1); setCustomRange(r.start,r.end); currentMode="custom"; render(); };
+  $("rangeThisYear").onclick = () => { const y=today().slice(0,4); setCustomRange(`${y}-01-01`,today()); currentMode="custom"; render(); };
+  $("rangeStart").onchange = () => { if(currentMode==="custom") { customStart=$("rangeStart").value; render(); } };
+  $("rangeEnd").onchange = () => { if(currentMode==="custom") { customEnd=$("rangeEnd").value; render(); } };
+  $("quantity").oninput = updateCalcHint;
+  $("unitPrice").oninput = updateCalcHint;
   $("search").oninput = () => renderList($("list"), historyEntries());
   $("backupBtn").onclick = backup;
   $("restoreBtn").onclick = () => $("restoreFile").click();
@@ -568,7 +685,7 @@ function init() {
   }).catch(() => render());
 
   if ("serviceWorker" in navigator && window.isSecureContext) {
-    navigator.serviceWorker.register("sw.js?v=fix11").catch(() => {});
+    navigator.serviceWorker.register("sw.js?v=fix14").catch(() => {});
   }
 }
 

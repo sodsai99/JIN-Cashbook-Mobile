@@ -16,10 +16,10 @@
 <header class="hero">
   <div class="hero-inner">
     <div class="brand">
-      <div class="wallet-art">👛</div>
-      <div>
+      <img class="brand-logo" src="jin-logo.png" alt="JIN COMPUTER">
+      <div class="brand-copy">
         <div class="brand-title"><span>JIN</span> Cashbook</div>
-        <div class="brand-sub">บันทึกรายรับ-รายจ่าย อย่างง่าย ใช้ได้ทุกที่</div>
+        <div class="brand-sub">จัดการการเงินได้ทุกที่...ง่ายขึ้นด้วยมือถือในมือคุณ</div>
       </div>
     </div>
     <button class="header-settings" id="headerSettings" aria-label="ตั้งค่า">⚙</button>
@@ -28,11 +28,30 @@
 
 <main>
 <section id="home" class="page active">
+  <div class="range-summary">
+    <div class="range-summary-text"><span class="range-calendar">▣</span><span>ช่วงวันที่ : <b id="rangeLabel">วันนี้</b></span></div>
+    <button id="rangeChange" type="button">เปลี่ยนช่วง⌄</button>
+  </div>
   <div class="period-pills">
     <button data-mode="day" class="active">วันนี้</button>
     <button data-mode="month">เดือนนี้</button>
     <button data-mode="year">ปีนี้</button>
     <button data-mode="all">ทั้งหมด</button>
+    <button data-mode="custom" class="custom-mode-button">กำหนดช่วง</button>
+  </div>
+
+  <div id="customRange" class="custom-range hidden">
+    <div class="custom-range-title">📅 เลือกช่วงวันที่ที่ต้องการดู</div>
+    <div class="range-fields">
+      <label>ตั้งแต่วันที่<input id="rangeStart" type="date"></label>
+      <label>ถึงวันที่<input id="rangeEnd" type="date"></label>
+    </div>
+    <div class="range-actions">
+      <button id="rangeThisMonth" type="button">เดือนนี้</button>
+      <button id="rangeLastMonth" type="button">เดือนที่แล้ว</button>
+      <button id="rangeThisYear" type="button">ปีนี้</button>
+      <button id="rangeApply" type="button" class="primary">ใช้ช่วงนี้</button>
+    </div>
   </div>
 
   <div class="money-grid">
@@ -46,10 +65,16 @@
     </div>
   </div>
 
-  <div class="balance-card">
-    <div class="balance-icon">📊</div>
-    <div class="balance-copy"><span>คงเหลือวันนี้</span><strong id="netTotal">฿0.00</strong></div>
-    <div class="balance-unit">บาท</div>
+  <div class="stats-grid">
+    <div class="balance-card">
+      <div class="balance-icon">🪙</div>
+      <div class="balance-copy"><span>คงเหลือ</span><strong id="netTotal">฿0.00</strong></div>
+    </div>
+    <div class="count-card">
+      <div class="count-icon">▤</div>
+      <div class="count-copy"><span>จำนวนรายการ</span><strong id="homeCount">0</strong></div>
+      <div class="count-mark">▰</div>
+    </div>
   </div>
 
   <div class="quick-grid">
@@ -64,13 +89,13 @@
   </div>
 
   <section class="panel chart-panel">
-    <div class="section-title blue-title"><span class="title-icon">▥</span><h3>สรุปรายรับรายจ่ายรายเดือน</h3><button id="seeAllChart" class="see-link">ดูทั้งหมด ›</button></div>
+    <div class="modern-section-head"><div class="modern-title"><span class="title-icon">⌁</span><h3>สรุปภาพรวม</h3></div><button id="chartPeriod" class="modern-select" type="button">เดือนนี้⌄</button></div>
     <div class="chart-legend"><span><i class="dot green"></i>รายรับ</span><span><i class="dot red"></i>รายจ่าย</span></div>
     <div id="monthlyChart" class="monthly-chart"></div>
   </section>
 
   <section class="panel recent-panel">
-    <div class="section-title blue-title"><span class="title-icon star">★</span><h3>รายการล่าสุด</h3><button class="see-link" id="seeAll">ดูทั้งหมด ›</button></div>
+    <div class="modern-section-head"><div class="modern-title"><span class="title-icon">◔</span><h3>รายการล่าสุด</h3></div><button class="modern-select" id="seeAll" type="button">ดูทั้งหมด ›</button></div>
     <div id="recentList"></div>
   </section>
 </section>
@@ -115,8 +140,12 @@
     <div class="sheet-head"><div><span class="kicker">รายการใหม่</span><h3 id="formTitle">เพิ่มรายการ</h3></div><button id="closeModal" class="close">×</button></div>
     <div class="type-switch"><button id="incomeBtn" class="type income active">＋ รายรับ</button><button id="expenseBtn" class="type expense">－ รายจ่าย</button></div>
     <label>วันที่<input id="date" type="date"></label>
-    <label>จำนวนเงิน (บาท)<input id="amount" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="0.00"></label>
-    <label>รายการรายละเอียด<input id="description" maxlength="250" placeholder="เช่น ขายสินค้า / ซื้ออุปกรณ์"></label>
+    <div class="quantity-grid">
+      <label>จำนวน<input id="quantity" type="number" inputmode="decimal" min="0.01" step="1" placeholder="เช่น 50"></label>
+      <label>ราคาต่อหน่วย<input id="unitPrice" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="เช่น 350"></label>
+    </div>
+    <label>จำนวนเงินรวม (บาท)<input id="amount" type="number" inputmode="decimal" min="0.01" step="0.01" placeholder="0.00"><small class="calc-hint" id="calcHint">ใส่จำนวน × ราคาต่อหน่วย ระบบคำนวณให้อัตโนมัติ</small></label>
+    <label>รายการรายละเอียด<input id="description" maxlength="250" placeholder="เช่น แรม / ขายสินค้า / ซื้ออุปกรณ์"></label>
     <label>หมายเหตุ<textarea id="note" maxlength="1000" placeholder="รายละเอียดเพิ่มเติม (ถ้ามี)"></textarea></label>
     <div class="form-actions"><button id="cancelBtn" class="secondary">ยกเลิก</button><button id="saveBtn" class="primary">บันทึกรายการ</button></div>
   </div>
